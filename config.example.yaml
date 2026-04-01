@@ -1,0 +1,19 @@
+# 以下三项可直接填写，也可通过环境变量 BASE_URL / API_KEY / FEISHU_WEBHOOK 传入
+base_url: "https://your-api-host"
+api_key: ""
+feishu_webhook: ""
+
+# 统计窗口（分钟）
+window_minutes: 5
+
+# TTFT 告警阈值（秒）：首 token 延迟超过此值视为慢请求
+ttft_threshold_secs: 10.0
+
+# TTFT 告警触发比例（%）
+ttft_alert_percent: 30.0
+
+# 失败率告警触发比例（%）
+failure_rate_percent: 10.0
+
+# 窗口内请求数低于此值时不触发告警
+min_requests: 5

@@ -1,0 +1,11 @@
+services:
+  monitor:
+    build: .
+    restart: unless-stopped
+    environment:
+      - BASE_URL=${BASE_URL}
+      - API_KEY=${API_KEY}
+      - FEISHU_WEBHOOK=${FEISHU_WEBHOOK}
+    # 也可挂载自定义配置文件（可选）
+    # volumes:
+    #   - ./config.yaml:/app/config.yaml:ro
