@@ -120,6 +120,7 @@ type logResponse struct {
 
 func sendFeishu(webhook, text string) {
 	if webhook == "" {
+		log.Println("[WARN] 飞书 webhook 未配置，跳过发送")
 		return
 	}
 	body, _ := json.Marshal(map[string]any{
@@ -131,7 +132,9 @@ func sendFeishu(webhook, text string) {
 		log.Printf("[WARN] 飞书发送失败: %v", err)
 		return
 	}
+	respBody, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
+	log.Printf("[INFO] 飞书响应: status=%d body=%s", resp.StatusCode, string(respBody))
 }
 
 // ─── 拉取日志 ─────────────────────────────────────────────────────────────────
@@ -263,7 +266,9 @@ func runCheck(cfg *Config, windowEnd time.Time) {
 
 	items, err := fetchLogs(cfg, startTS, endTS)
 	if err != nil {
-		log.Printf("[ERROR] 拉取日志失败: %v", err)
+		msg := fmt.Sprintf("[ERROR] 🔴 NewAPI 请求失败 | 从 %s 到 %s | %v", startStr, endStr, err)
+		log.Printf("%s", msg)
+		sendFeishu(cfg.FeishuWebhook, msg)
 		return
 	}
 
@@ -275,6 +280,8 @@ func runCheck(cfg *Config, windowEnd time.Time) {
 		stats.TTFTAvgSecs, stats.TTFTP95Secs,
 	)
 
+	alerted := false
+
 	if stats.StreamTotal >= cfg.MinRequests && stats.TTFTSlowRate >= cfg.TTFTAlertPercent {
 		msg := fmt.Sprintf("[ALERT] 🚨 TTFT超阈值 | 从 %s 到 %s | 流式请求 %d 条, TTFT超长 %d 条(%.1f%%) | avg %.2fs, p95 %.2fs",
 			startStr, endStr,
@@ -283,6 +290,7 @@ func runCheck(cfg *Config, windowEnd time.Time) {
 		)
 		fmt.Println(msg)
 		sendFeishu(cfg.FeishuWebhook, msg)
+		alerted = true
 	}
 
 	if stats.Total >= cfg.MinRequests && stats.FailureRate >= cfg.FailureRatePercent {
@@ -291,6 +299,16 @@ func runCheck(cfg *Config, windowEnd time.Time) {
 			stats.Total, stats.Failed, stats.FailureRate,
 		)
 		fmt.Println(msg)
+		sendFeishu(cfg.FeishuWebhook, msg)
+		alerted = true
+	}
+
+	if !alerted && stats.Total >= cfg.MinRequests {
+		msg := fmt.Sprintf("[OK] ✅ 运行正常 | 从 %s 到 %s | 请求 %d 条, 错误 %d 条(%.1f%%) | TTFT avg=%.2fs p95=%.2fs",
+			startStr, endStr,
+			stats.Total, stats.Failed, stats.FailureRate,
+			stats.TTFTAvgSecs, stats.TTFTP95Secs,
+		)
 		sendFeishu(cfg.FeishuWebhook, msg)
 	}
 
