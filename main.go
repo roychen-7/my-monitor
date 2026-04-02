@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -175,6 +176,7 @@ func fetchOnePage(cfg *Config, startTS, endTS int64, page int) (*logResponse, er
 
 func fetchLogs(cfg *Config, startTS, endTS int64) ([]LogItem, error) {
 	const pageSize = 100
+	const maxConcurrency = 10
 
 	// 第一页：拿到 total，决定总页数
 	first, err := fetchOnePage(cfg, startTS, endTS, 1)
@@ -187,15 +189,34 @@ func fetchLogs(cfg *Config, startTS, endTS int64) ([]LogItem, error) {
 	totalPages := (total + pageSize - 1) / pageSize
 	log.Printf("[INFO] 日志总条数=%d，共 %d 页", total, totalPages)
 
-	for page := 2; page <= totalPages; page++ {
-		result, err := fetchOnePage(cfg, startTS, endTS, page)
-		if err != nil {
-			log.Printf("[WARN] 第%d页请求失败，跳过: %v", page, err)
-			continue
-		}
-		allItems = append(allItems, result.Data.Items...)
+	if totalPages <= 1 {
+		return allItems, nil
 	}
 
+	var (
+		mu  sync.Mutex
+		wg  sync.WaitGroup
+		sem = make(chan struct{}, maxConcurrency)
+	)
+
+	for page := 2; page <= totalPages; page++ {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(p int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			result, err := fetchOnePage(cfg, startTS, endTS, p)
+			if err != nil {
+				log.Printf("[WARN] 第%d页请求失败，跳过: %v", p, err)
+				return
+			}
+			mu.Lock()
+			allItems = append(allItems, result.Data.Items...)
+			mu.Unlock()
+		}(page)
+	}
+
+	wg.Wait()
 	return allItems, nil
 }
 
@@ -298,35 +319,35 @@ func runCheck(cfg *Config, windowEnd time.Time) {
 			stats.StreamTotal, stats.SlowTTFT, stats.TTFTSlowRate,
 			stats.TTFTAvgSecs, stats.TTFTP95Secs,
 		)
-		fmt.Println(msg)
+		log.Printf("%s", msg)
 		sendFeishu(cfg.FeishuWebhook, msg)
 		alerted = true
 	}
 
-	if stats.Total >= cfg.MinRequests && stats.FailureRate >= cfg.FailureRatePercent {
+	if stats.Total > 0 && stats.Failed == stats.Total {
+		msg := fmt.Sprintf("[ALERT] 🚨 全部请求失败 | 从 %s 到 %s | 请求 %d 条全部失败，可能是 API Key 失效或服务异常",
+			startStr, endStr, stats.Total,
+		)
+		log.Printf("%s", msg)
+		sendFeishu(cfg.FeishuWebhook, msg)
+		alerted = true
+	} else if stats.Total >= cfg.MinRequests && stats.FailureRate >= cfg.FailureRatePercent {
 		msg := fmt.Sprintf("[ALERT] 🚨 失败率超阈值 | 从 %s 到 %s | 请求 %d 条, 错误 %d 条(%.1f%%)",
 			startStr, endStr,
 			stats.Total, stats.Failed, stats.FailureRate,
 		)
-		fmt.Println(msg)
+		log.Printf("%s", msg)
 		sendFeishu(cfg.FeishuWebhook, msg)
 		alerted = true
 	}
 
-	if !alerted && stats.Total >= cfg.MinRequests {
-		msg := fmt.Sprintf("[OK] ✅ 运行正常 | 从 %s 到 %s | 请求 %d 条, 错误 %d 条(%.1f%%) | TTFT avg=%.2fs p95=%.2fs",
+	if !alerted {
+		log.Printf("[OK] ✅ 运行正常 | %s~%s | 请求=%d 错误=%d 错误率=%.1f%% | TTFT avg=%.2fs p95=%.2fs",
 			startStr, endStr,
 			stats.Total, stats.Failed, stats.FailureRate,
 			stats.TTFTAvgSecs, stats.TTFTP95Secs,
 		)
-		sendFeishu(cfg.FeishuWebhook, msg)
 	}
-
-	log.Printf("[OK] %s~%s | 请求=%d 错误=%d 错误率=%.1f%% | TTFT avg=%.2fs p95=%.2fs",
-		startStr, endStr,
-		stats.Total, stats.Failed, stats.FailureRate,
-		stats.TTFTAvgSecs, stats.TTFTP95Secs,
-	)
 }
 
 // ─── 调度 ─────────────────────────────────────────────────────────────────────
