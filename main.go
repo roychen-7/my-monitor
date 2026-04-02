@@ -139,51 +139,61 @@ func sendFeishu(webhook, text string) {
 
 // ─── 拉取日志 ─────────────────────────────────────────────────────────────────
 
+func fetchOnePage(cfg *Config, startTS, endTS int64, page int) (*logResponse, error) {
+	const pageSize = 100
+	u, err := url.Parse(cfg.BaseURL + "/api/log/")
+	if err != nil {
+		return nil, fmt.Errorf("解析 base_url 失败: %w", err)
+	}
+	q := u.Query()
+	q.Set("p", strconv.Itoa(page))
+	q.Set("page_size", strconv.Itoa(pageSize))
+	q.Set("start_timestamp", strconv.FormatInt(startTS, 10))
+	q.Set("end_timestamp", strconv.FormatInt(endTS, 10))
+	q.Set("type", "0")
+	u.RawQuery = q.Encode()
+
+	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
+	resp, err := doRequest(cfg, req)
+	if err != nil {
+		return nil, err
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	var result logResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %w\nBody: %.200s", err, string(body))
+	}
+	if !result.Success {
+		return nil, fmt.Errorf("接口返回失败: %s", result.Message)
+	}
+	return &result, nil
+}
+
 func fetchLogs(cfg *Config, startTS, endTS int64) ([]LogItem, error) {
-	const pageSize = 500
-	var allItems []LogItem
+	const pageSize = 100
 
-	for page := 1; ; page++ {
-		u, err := url.Parse(cfg.BaseURL + "/api/log/")
+	// 第一页：拿到 total，决定总页数
+	first, err := fetchOnePage(cfg, startTS, endTS, 1)
+	if err != nil {
+		return nil, fmt.Errorf("请求第1页失败: %w", err)
+	}
+	allItems := append([]LogItem{}, first.Data.Items...)
+
+	total := first.Data.Total
+	totalPages := (total + pageSize - 1) / pageSize
+	log.Printf("[INFO] 日志总条数=%d，共 %d 页", total, totalPages)
+
+	for page := 2; page <= totalPages; page++ {
+		result, err := fetchOnePage(cfg, startTS, endTS, page)
 		if err != nil {
-			return nil, fmt.Errorf("解析 base_url 失败: %w", err)
+			log.Printf("[WARN] 第%d页请求失败，跳过: %v", page, err)
+			continue
 		}
-		q := u.Query()
-		q.Set("p", strconv.Itoa(page))
-		q.Set("page_size", strconv.Itoa(pageSize))
-		q.Set("start_timestamp", strconv.FormatInt(startTS, 10))
-		q.Set("end_timestamp", strconv.FormatInt(endTS, 10))
-		q.Set("type", "0") // 0 = 全部类型
-		u.RawQuery = q.Encode()
-
-		req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
-		resp, err := doRequest(cfg, req)
-		if err != nil {
-			return nil, fmt.Errorf("请求日志失败: %w", err)
-		}
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-
-		var result logResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("解析日志响应失败: %w\nBody: %.200s", err, string(body))
-		}
-		if !result.Success {
-			return nil, fmt.Errorf("日志接口返回失败: %s", result.Message)
-		}
-
 		allItems = append(allItems, result.Data.Items...)
-
-		if len(result.Data.Items) < pageSize {
-			break
-		}
-		if len(allItems) >= 20000 {
-			log.Printf("[WARN] 日志条数达到 20000 上限，停止翻页")
-			break
-		}
 	}
 
 	return allItems, nil
