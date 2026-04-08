@@ -37,12 +37,20 @@ type LogItem struct {
 }
 
 // Frt 从 other JSON 中读取 frt（First Response Time，毫秒）
-func (l LogItem) Frt() float64 {
+func (l LogItem) otherJSON() map[string]any {
 	if l.Other == "" {
-		return 0
+		return nil
 	}
 	var m map[string]any
 	if err := json.Unmarshal([]byte(l.Other), &m); err != nil {
+		return nil
+	}
+	return m
+}
+
+func (l LogItem) Frt() float64 {
+	m := l.otherJSON()
+	if m == nil {
 		return 0
 	}
 	switch v := m["frt"].(type) {
@@ -51,6 +59,21 @@ func (l LogItem) Frt() float64 {
 	case json.Number:
 		f, _ := v.Float64()
 		return f
+	}
+	return 0
+}
+
+func (l LogItem) StatusCode() int {
+	m := l.otherJSON()
+	if m == nil {
+		return 0
+	}
+	switch v := m["status_code"].(type) {
+	case float64:
+		return int(v)
+	case json.Number:
+		i, _ := v.Int64()
+		return int(i)
 	}
 	return 0
 }

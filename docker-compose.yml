@@ -6,6 +6,8 @@ services:
       - BASE_URL=${BASE_URL}
       - API_KEY=${API_KEY}
       - FEISHU_WEBHOOK=${FEISHU_WEBHOOK}
+    cap_add:
+      - NET_RAW
     logging:
       driver: "json-file"
       options:

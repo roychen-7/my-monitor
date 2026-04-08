@@ -34,16 +34,20 @@ func RunCheck(cfg *Config, windowEnd time.Time) {
 		chItems := groups[ch]
 		stats := Analyze(chItems, cfg, ch)
 
-		log.Printf("[INFO] %s~%s [%s] | API请求=%d 失败=%d(%.1f%%) | 流式=%d 慢TTFT=%d(%.1f%%) avg=%.2fs p95=%.2fs",
+		errCodeStr := ""
+		if s := stats.ErrorCodeSummary(); s != "" {
+			errCodeStr = " 错误码[" + s + "]"
+		}
+		log.Printf("[INFO] %s~%s [%s] | API请求=%d 失败=%d(%.1f%%)%s | 流式=%d 慢TTFT=%d(%.1f%%) avg=%.2fs p95=%.2fs",
 			startStr, endStr, ch,
-			stats.Total, stats.Failed, stats.FailureRate,
+			stats.Total, stats.Failed, stats.FailureRate, errCodeStr,
 			stats.StreamTotal, stats.SlowTTFT, stats.TTFTSlowRate,
 			stats.TTFTAvgSecs, stats.TTFTP95Secs,
 		)
 
 		alerted := false
 
-		if stats.StreamTotal >= cfg.MinRequests && stats.TTFTSlowRate >= cfg.TTFTAlertPercent {
+		if stats.StreamTotal >= cfg.MinRequests && stats.TTFTSlowRate >= cfg.TTFTAlertPercent && stats.TTFTAvgSecs >= cfg.TTFTAvgThresholdSecs {
 			msg := fmt.Sprintf("[ALERT] 🚨 TTFT超阈值 [%s] | 从 %s 到 %s | 流式请求 %d 条, TTFT超长 %d 条(%.1f%%) | avg %.2fs, p95 %.2fs",
 				ch, startStr, endStr,
 				stats.StreamTotal, stats.SlowTTFT, stats.TTFTSlowRate,
@@ -54,21 +58,33 @@ func RunCheck(cfg *Config, windowEnd time.Time) {
 			alerted = true
 		}
 
-		if stats.Total > 0 && stats.Failed == stats.Total {
-			msg := fmt.Sprintf("[ALERT] 🚨 全部请求失败 [%s] | 从 %s 到 %s | 请求 %d 条全部失败，可能是 API Key 失效或服务异常",
-				ch, startStr, endStr, stats.Total,
-			)
-			log.Printf("%s", msg)
-			SendFeishu(cfg.FeishuWebhook, msg)
-			alerted = true
-		} else if stats.Total >= cfg.MinRequests && stats.FailureRate >= cfg.FailureRatePercent {
-			msg := fmt.Sprintf("[ALERT] 🚨 失败率超阈值 [%s] | 从 %s 到 %s | 请求 %d 条, 错误 %d 条(%.1f%%)",
+		if stats.Total >= cfg.MinRequests && stats.FailureRate >= cfg.FailureRatePercent {
+			msg := fmt.Sprintf("[ALERT] 🚨 错误率超阈值 [%s] | 从 %s 到 %s | 请求 %d 条, 错误 %d 条(%.1f%%)",
 				ch, startStr, endStr,
 				stats.Total, stats.Failed, stats.FailureRate,
 			)
 			log.Printf("%s", msg)
 			SendFeishu(cfg.FeishuWebhook, msg)
 			alerted = true
+		}
+
+		// 特定错误码告警
+		if stats.Total >= cfg.MinRequests {
+			for _, code := range []int{504, 524, 400, 408} {
+				count := stats.ErrorCodeCounts[code]
+				if count == 0 {
+					continue
+				}
+				rate := float64(count) / float64(stats.Total) * 100
+				if rate >= cfg.SpecificErrorRatePercent {
+					msg := fmt.Sprintf("[ALERT] 🚨 错误码%d超阈值 [%s] | 从 %s 到 %s | %d错误 %d 条(%.1f%%) | 总请求 %d 条",
+						code, ch, startStr, endStr, code, count, rate, stats.Total,
+					)
+					log.Printf("%s", msg)
+					SendFeishu(cfg.FeishuWebhook, msg)
+					alerted = true
+				}
+			}
 		}
 
 		if !alerted {

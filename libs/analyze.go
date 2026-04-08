@@ -1,20 +1,40 @@
 package libs
 
 import (
+	"fmt"
 	"math"
 	"sort"
+	"strings"
 )
 
 type Stats struct {
-	ChannelName  string
-	Total        int
-	Failed       int
-	StreamTotal  int
-	SlowTTFT     int
-	FailureRate  float64
-	TTFTSlowRate float64
-	TTFTAvgSecs  float64
-	TTFTP95Secs  float64
+	ChannelName     string
+	Total           int
+	Failed          int
+	StreamTotal     int
+	SlowTTFT        int
+	FailureRate     float64
+	TTFTSlowRate    float64
+	TTFTAvgSecs     float64
+	TTFTP95Secs     float64
+	ErrorCodeCounts map[int]int
+}
+
+// ErrorCodeSummary 返回如 "400×1 504×3" 的字符串，无错误时返回空串
+func (s Stats) ErrorCodeSummary() string {
+	if len(s.ErrorCodeCounts) == 0 {
+		return ""
+	}
+	codes := make([]int, 0, len(s.ErrorCodeCounts))
+	for code := range s.ErrorCodeCounts {
+		codes = append(codes, code)
+	}
+	sort.Ints(codes)
+	parts := make([]string, 0, len(codes))
+	for _, code := range codes {
+		parts = append(parts, fmt.Sprintf("%d×%d", code, s.ErrorCodeCounts[code]))
+	}
+	return strings.Join(parts, " ")
 }
 
 // GroupByChannel 按 ChannelName 分组日志
@@ -32,31 +52,40 @@ func GroupByChannel(items []LogItem) map[string][]LogItem {
 
 func Analyze(items []LogItem, cfg *Config, channelName string) Stats {
 	ttftThresholdMs := cfg.TTFTThresholdSecs * 1000
-	s := Stats{ChannelName: channelName}
+	s := Stats{ChannelName: channelName, ErrorCodeCounts: make(map[int]int)}
 	var ttftValues []float64
 
 	for _, item := range items {
-		if item.Type != 2 {
-			continue
-		}
-		if item.PromptTokens == 0 {
-			continue
-		}
-		s.Total++
-
-		if item.Quota == 0 {
-			s.Failed++
-		}
-
-		if item.IsStream {
-			frt := item.Frt()
-			if frt > 0 {
-				s.StreamTotal++
-				ttftValues = append(ttftValues, frt)
-				if frt > ttftThresholdMs {
-					s.SlowTTFT++
+		switch item.Type {
+		case 2:
+			if item.PromptTokens == 0 {
+				continue
+			}
+			s.Total++
+			if item.Quota == 0 {
+				s.Failed++
+				if code := item.StatusCode(); code > 0 {
+					s.ErrorCodeCounts[code]++
 				}
 			}
+			if item.IsStream {
+				frt := item.Frt()
+				if frt > 0 {
+					s.StreamTotal++
+					ttftValues = append(ttftValues, frt)
+					if frt > ttftThresholdMs {
+						s.SlowTTFT++
+					}
+				}
+			}
+		case 5:
+			s.Total++
+			s.Failed++
+			if code := item.StatusCode(); code > 0 {
+				s.ErrorCodeCounts[code]++
+			}
+		default:
+			continue
 		}
 	}
 

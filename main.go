@@ -8,6 +8,16 @@ import (
 	"my-monitor/libs"
 )
 
+func startPingLoop(cfg *libs.Config) {
+	go func() {
+		for {
+			next := time.Now().Truncate(time.Minute).Add(time.Minute)
+			time.Sleep(time.Until(next))
+			libs.RunPingCheck(cfg)
+		}
+	}()
+}
+
 func main() {
 	cfg, err := libs.LoadConfig("config.yaml")
 	if err != nil {
@@ -31,10 +41,11 @@ func main() {
 		log.Printf("[WARN] 启动时获取节假日数据失败，将使用周末/工作日判断: %v", err)
 	}
 	libs.StartHolidayRefresher()
+	startPingLoop(cfg)
 
-	log.Printf("监控启动 | 窗口=%dm TTFT阈值=%.0fs(%.0f%%) 失败率阈值=%.0f%% | 工作日10-22点每5分钟检查，其余每小时检查",
-		cfg.WindowMinutes,
-		cfg.TTFTThresholdSecs, cfg.TTFTAlertPercent, cfg.FailureRatePercent,
+	log.Printf("监控启动 | 窗口=%dm 最小请求数=%d | TTFT慢比例>=%.0f%%且avg>=%.0fs 失败率>=%.0f%% 特定错误码(504/524/400/408)>=%.0f%% | 工作日10-22点每5分钟检查，其余每小时检查",
+		cfg.WindowMinutes, cfg.MinRequests,
+		cfg.TTFTAlertPercent, cfg.TTFTAvgThresholdSecs, cfg.FailureRatePercent, cfg.SpecificErrorRatePercent,
 	)
 
 	for {
