@@ -17,6 +17,7 @@ type Config struct {
 	TTFTAlertPercent      float64 `yaml:"ttft_alert_percent"`
 	FailureRatePercent    float64 `yaml:"failure_rate_percent"`
 	MinRequests                int     `yaml:"min_requests"`
+	MinErrors                  int     `yaml:"min_errors"`
 	PingAvgThresholdMs         float64 `yaml:"ping_avg_threshold_ms"`
 	SpecificErrorRatePercent   float64 `yaml:"specific_error_rate_percent"`
 }
@@ -50,6 +51,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.PingAvgThresholdMs <= 0 {
 		cfg.PingAvgThresholdMs = 300
+	}
+	if cfg.MinErrors <= 0 {
+		cfg.MinErrors = 5
 	}
 	if cfg.SpecificErrorRatePercent <= 0 {
 		cfg.SpecificErrorRatePercent = 1

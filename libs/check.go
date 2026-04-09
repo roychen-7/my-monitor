@@ -58,7 +58,7 @@ func RunCheck(cfg *Config, windowEnd time.Time) {
 			alerted = true
 		}
 
-		if stats.Total >= cfg.MinRequests && stats.FailureRate >= cfg.FailureRatePercent {
+		if stats.Total >= cfg.MinRequests && stats.Failed >= cfg.MinErrors && stats.FailureRate >= cfg.FailureRatePercent {
 			msg := fmt.Sprintf("[ALERT] 🚨 错误率超阈值 [%s] | 从 %s 到 %s | 请求 %d 条, 错误 %d 条(%.1f%%)",
 				ch, startStr, endStr,
 				stats.Total, stats.Failed, stats.FailureRate,
@@ -76,7 +76,7 @@ func RunCheck(cfg *Config, windowEnd time.Time) {
 					continue
 				}
 				rate := float64(count) / float64(stats.Total) * 100
-				if rate >= cfg.SpecificErrorRatePercent {
+				if count >= cfg.MinErrors && rate >= cfg.SpecificErrorRatePercent {
 					msg := fmt.Sprintf("[ALERT] 🚨 错误码%d超阈值 [%s] | 从 %s 到 %s | %d错误 %d 条(%.1f%%) | 总请求 %d 条",
 						code, ch, startStr, endStr, code, count, rate, stats.Total,
 					)

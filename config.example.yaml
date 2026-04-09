@@ -17,3 +17,6 @@ failure_rate_percent: 10.0
 
 # 窗口内请求数低于此值时不触发告警
 min_requests: 5
+
+# 窗口内错误数低于此值时不触发告警
+min_errors: 5
